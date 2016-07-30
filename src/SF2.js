@@ -1,8 +1,3 @@
-const fs = require("fs");
-const util = require("util");
-const path = require("path");
-
-
 class Chunk {
 
   constructor(id, data) {
@@ -119,6 +114,10 @@ class RecordLayout {
       throw Error("RecordLayout length mismatch");
   }
 
+  get names() {
+    return this.parts.map(p => p.name);
+  }
+
   parse(chunk) {
     let data = chunk.data;
     if (data.length % this.len || data.length === 0)
@@ -146,7 +145,7 @@ class RecordLayout {
   }
 
   z20(buf, pos) {
-    return buf.toString("utf-8", pos, pos + 20).replace(/\0+$/, "");
+    return buf.toString("binary", pos, pos + 20).replace(/\0+$/, "");
   }
 
   u2(buf, pos) {
@@ -296,7 +295,9 @@ class Generator {
   }
 
   static build(records) {
-    return records.map(g => new Generator(g));
+    const res = records.map(g => new Generator(g));
+    res.sf2Terminator = records.sf2Terminator;
+    return res;
   }
 
 }
@@ -382,7 +383,7 @@ class SF2 extends RIFF {
     if (pairwise) {
       for (let i = 1; i < res.length; ++i)
         pairwise(res[i - 1], res[i]);
-      res.pop();
+      res.sf2Terminator = res.pop();
     }
     if (postproc) res = postproc(res);
     return this[_name] = res;
@@ -481,234 +482,8 @@ class SF2 extends RIFF {
 }
 
 
-function writeWavs(sf2) {
-  let fileNames = new Set();
-  const smpl = sf2.chunks[0].firstForName("sdta").firstForName("smpl").data;
-  const unpaired = sf2.shdr.every(s => !s.wSampleLink);
-  for (let inst of sf2.inst) {
-    const iName = inst.achInstName
-          .replace(/[^A-Za-z0-9\-]+/g, "_")
-          .replace(/^_/, "").replace("_$", "");
-    // console.log(`${inst.achInstName} => ${iName}`);
-
-    let pairings = null;
-    if (unpaired) {
-      // The FluidR3_GM.sf2 from Gentoo or Ubuntu has broken wSampleLink
-      // so we have to fix pairings
-      let pairings1 = {}, failedToPair = false;
-      for (let z of inst.localZones) {
-        let side;
-        if (z.sampleID.sfSampleType === 2)
-          side = 'r';
-        else if (z.sampleID.sfSampleType === 4)
-          side = 'l';
-        else
-          continue;
-        let k = `${z.keyRange}|${z.velRange}|${side}`;
-        if (pairings1.hasOwnProperty(k)) {
-          if (!failedToPair) {
-            for (let z of inst.localZones)
-              console.log(z.gens.join(", ") + "|" + z.sampleID.sfSampleType);
-            failedToPair = true;
-          }
-          console.log(`!!!!! Duplicate pairing key ${k} for ${inst.achInstName} !!!!!`);
-        }
-        pairings1[k] = z.sampleID.id;
-      }
-      pairings = {};
-      for (let k in pairings1) {
-        let l = k.slice(0, -1) + {r:"l", l:"r"}[k.slice(-1)];
-        if (pairings1.hasOwnProperty(l)) {
-          pairings[pairings1[k]] = pairings1[l];
-        } else {
-          if (!failedToPair) {
-            for (let z of inst.localZones)
-              console.log(z.gens.join(", ") + "|" + z.sampleID.sfSampleType);
-            failedToPair = true;
-          }
-          console.log(`!!!!! Unpaired inst=${inst.achInstName} ${k} !!!!!`);
-        }
-      }
-      if (failedToPair) {
-        console.log("");
-        continue;
-      }
-    }
-
-    let samples = new Set(inst.localZones.map(z => z.sampleID.id));
-    samples = Array.from(samples.values()).sort((a, b) => a - b)
-      .map(s => sf2.shdr[s]);
-      
-    if (samples.length === 0) continue;
-    let rates = Array.from(new Set(samples.map(s => s.dwSamplerRate)).values());
-    for (let rate of rates) {
-      let fName = iName;
-      if (rates.length !== 1)
-        fName += "-" + rate;
-      if (fileNames.has(fName))
-        throw Error(`File name collision: ${fName}`);
-      fileNames.add(fName);
-      let totalLen = 0;
-      let allMono = true;
-      let parts = [];
-      for (let s of samples) {
-        if (s.dwSamplerRate !== rate)
-          continue;
-        let left, right = s.dwStart;
-        switch (s.sfSampleType) {
-        case 1:
-          left = right; // mono
-          break;
-        case 2:
-          left = sf2.shdr[unpaired ? pairings[s.id] : s.wSampleLink].dwStart;
-          allMono = false;
-          break;
-        case 4:
-          continue; // left sample, process when we see right sample
-        default:
-          throw Error(`Unknown sample type ${right.sfSampleType}`);
-        }
-        let len = s.dwEnd - s.dwStart;
-        totalLen += len;
-        parts.push({left, right, len});
-      }
-      const channels = allMono ? 1 : 2;
-      const bytesPerSample = 2;
-      const headlen = 16;
-      const datalen = totalLen * channels * bytesPerSample;
-      const buf = Buffer.alloc(headlen + datalen + 2*8 + 12);
-      buf.write("RIFF", 0);
-      buf.writeUInt32LE(headlen + datalen + 2*8 + 4, 4);
-      buf.write("WAVE", 8);
-      buf.write("fmt ", 12);
-      buf.writeUInt32LE(headlen, 16);
-      let pos = 20;
-      const blockAlign = channels * bytesPerSample;
-      buf.writeUInt16LE(1, pos); // formatTag: PCM
-      buf.writeUInt16LE(channels, pos + 2);
-      buf.writeUInt32LE(rate, pos + 4);
-      buf.writeUInt32LE(rate * blockAlign, pos + 8);
-      buf.writeUInt16LE(blockAlign, pos + 12);
-      buf.writeUInt16LE(bytesPerSample * 8, pos + 14);
-      pos += 16;
-      buf.write("data", pos);
-      buf.writeUInt32LE(datalen, pos + 4);
-      pos += 8;
-      for (let p of parts) {
-        let {left, right, len} = p;
-        while (len--) {
-          buf.writeInt16LE(smpl.readInt16LE((left++) << 1), pos);
-          if (!allMono)
-            buf.writeInt16LE(smpl.readInt16LE((right++) << 1),
-                             pos + bytesPerSample);
-          pos += bytesPerSample * channels;
-        }
-      }
-      if (pos !== buf.length)
-        throw Error(`Expected to write ${buf.length} but wrote ${pos} ${totalLen}`);
-      fs.writeFile(path.join("out", fName + ".wav"), buf, (err) => {
-        if (err) throw err;
-      });
-    }
-  }
-}
-
-
-function divider(title) {
-  console.log(`==================== ${title} ====================`);
-}
-
-
-function dumpPreset(sf2, bank, preset) {
-  const p = sf2.phdr.filter(p => p.wBank === bank && p.wPreset === preset)[0];
-  divider(`${bank}-${preset}: ${p.achPresetName}`);
-  let insts = new Set();
-  for (let z of p.zones) {
-    console.log(z.gens.join(", "));
-    for (let g of z.gens) {
-      if (g.name === "instrument") {
-        let i = g.genAmount.wAmount;
-        insts.add(i);
-      }
-    }
-  }
-  insts = Array.from(insts.values()).sort((a, b) => a - b);
-  for (let i of insts) {
-    const inst = sf2.inst[i];
-    divider(`${i}: ${inst.achInstName}`);
-    for (let z of inst.zones) {
-      console.log(z.gens.join(", "));
-    }
-  }
-}
-
-fs.readFile(process.argv[2], function(err, buf) {
-  if (err) throw err;
-  let sf2 = new SF2(buf);
-  console.log(String(sf2));
-
-  writeWavs(sf2);
-
-  console.log(sf2.info);
-
-  return;
-  let banks = {};
-  for (let p of sf2.phdr) banks[p.wBank] = (banks[p.wBank] || 0) + 1;
-  console.log(banks);
-  banks = Object.keys(banks).map(x => +x).sort((a, b) => a - b);
-  for (let bank of banks) {
-    divider(`bank ${bank}`);
-    bank = sf2.phdr.filter(p => p.wBank === bank);
-    bank.sort((a, b) => a.wPreset - b.wPreset);
-    for (let p of bank) {
-      console.log(`${p.wPreset}: ${p.achPresetName}`);
-    }
-  }
-  divider("inst");
-  sf2.inst.forEach((i, j) => console.log(`${j}: ${i.achInstName}`));
-  dumpPreset(sf2, 0, 47); // timpani
-  dumpPreset(sf2, 0, 0); // piano
-  dumpPreset(sf2, 128, 0); // standard drumset
-
-  divider("tails");
-  let tails = [];
-  for (let bank of banks) {
-    bank = sf2.phdr.filter(p => p.wBank === bank);
-    bank.sort((a, b) => a.wPreset - b.wPreset);
-    for (let p of bank) {
-      for (let i of p.instruments) {
-        for (let z of i.localZones) {
-          if (z.sampleModes === 3) {
-            let s = z.sampleID;
-            tails.append({p, i, z, s, t: s.dwEnd - s.dwEndloop});
-          }
-        }
-      }
-    }
-  }
-  tails.sort((a, b) => b.t - a.t);
-  for (let t of tails.slice(0, 50)) {
-    console.log(`${t.t}`);
-  }
-
-  divider("modes");
-  for (let i of sf2.inst) {
-    let modes = [0, 0, 0, 0];
-    for (let z of i.localZones) {
-      modes[z.sampleModes || 0]++;
-    }
-    console.log(`${modes.join(",")} - ${i.achInstName}`);
-  }
-
-  return;
-  tails = sf2.shdr
-    .filter(s => s.dwEndloop !== s.dwEnd)
-    .sort((a, b) => a.dwEndloop - a.dwEnd - b.dwEndloop + b.dwEnd);
-  for (let s of tails.slice(0, 50)) {
-    let insts = sf2.inst
-        .filter(inst => inst.zones.some(z => z.gens.some(
-          g => g.name === "sampleID" && g.genAmount.wAmount === s.id)))
-        .map(i => `${i.achInstName}(${i.id})`).join(", ");
-    console.log(`${s.id}: ${s.dwStart} - ${s.dwStartloop} - ${s.dwEndloop} - ${s.dwEnd} (${s.dwEnd - s.dwEndloop} / ${s.dwEndloop - s.dwStartloop} / ${s.dwEnd - s.dwStart}) [${insts}]`);
-  }
-});
+module.exports.Chunk = Chunk;
+module.exports.RIFF = RIFF;
+module.exports.Range = Range;
+module.exports.RecordLayout = RecordLayout;
+module.exports.SF2 = SF2;
