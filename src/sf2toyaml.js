@@ -14,7 +14,13 @@ const instrumentKeys = SF2.RecordLayout.inst.names.concat(
 );
 
 const sampleKeys = SF2.RecordLayout.shdr.names.concat(
-  "lengthToNext", "smpl", "sm24"
+  "sdta", "length", "smpl", "sm24"
+);
+
+const termKeys = ["phdr", "inst", "shdr"].concat(
+  SF2.RecordLayout.phdr.names,
+  SF2.RecordLayout.inst.names,
+  SF2.RecordLayout.shdr.names
 );
 
 class YamlGen {
@@ -31,7 +37,6 @@ class YamlGen {
       dir + "presets",
       dir + "instruments",
       dir + "samples",
-      dir + "table",
       dir + "wav",
     ];
     for (let dir of dirs) {
@@ -49,8 +54,10 @@ class YamlGen {
     this.writeYaml("RIFF", this.riff(this.sf2)[""]);
     this.writeYaml("INFO", this.info());
     this.writeYaml("sdta", this.sdta());
-    this.writeYaml("phdr", this.phdr());
-    this.writeYaml("inst", this.inst());
+    this.writeYaml("phdr", this.presets);
+    this.writeYaml("inst", this.instruments);
+    this.writeYaml("shdr", this.samples);
+    this.writeYaml("term", this.terminators(), termKeys);
     for (let i of this.sf2.phdr)
       this.writeYaml(
         "presets/" + this.presets[i.id],
@@ -61,11 +68,6 @@ class YamlGen {
         "instruments/" + this.instruments[i.id],
         this.instrument(i),
         instrumentKeys);
-    for (let i of this.sf2.shdr)
-      this.writeYaml(
-        "samples/" + this.samples[i.id],
-        this.sample(i),
-        sampleKeys);
   }
 
   safeName(str) {
@@ -138,6 +140,26 @@ class YamlGen {
     return res;
   }
 
+  terminators() {
+    let term, rec;
+    let res = {};
+
+    term = Object.assign({}, this.sf2.phdr.sf2Terminator);
+    delete term.id;
+    delete term.wPresetBagNdx;
+    res.phdr = term;
+
+    res.inst = {
+      achInstName: this.sf2.inst.sf2Terminator.achInstName
+    };
+
+    term = Object.assign({}, this.sf2.shdr.sf2Terminator);
+    delete term.id;
+    res.shdr = term;
+
+    return res;
+  }
+
   sdta() {
     const sdta = this.sf2.chunks[0].firstForName("sdta");
     const smpl = sdta.firstForName("smpl");
@@ -151,6 +173,7 @@ class YamlGen {
         start: s.dwStart,
         end: s.dwEnd,
         rate: s.dwSamplerRate,
+        shdr: s,
       };
       this.sdtaMap.set(link.start, link);
       seq.push(link);
@@ -208,7 +231,9 @@ class YamlGen {
         d.sm24 = h.digest("hex");
       }
       this.writeWav(s.name, s.rate, hi, lo);
-      this.writeYaml("table/" + s.name, d, ["length", "smpl", "sm24"]);
+      var shdr = s.shdr ? this.sample(s.shdr) : {};
+      shdr.sdta = d;
+      this.writeYaml("samples/" + s.name, shdr, sampleKeys);
       res.push(s.name);
       if (s.next.start - s.end !== 32)
         res.push({gap: s.next.start - s.end});
@@ -254,21 +279,6 @@ class YamlGen {
     if (chunk.chunks)
       return {[chunk.id]: chunk.chunks.map(this.riff, this)};
     return chunk.id;
-  }
-
-  phdr() {
-    const res = this.presets.slice();
-    const term = Object.assign({}, this.sf2.phdr.sf2Terminator);
-    delete term.id;
-    delete term.wPresetBagNdx;
-    res.push(term);
-    return res;
-  }
-
-  inst() {
-    const res = this.instruments.slice();
-    res.push(this.sf2.inst.sf2Terminator.achInstName);
-    return res;
   }
 
   preset(p) {
@@ -335,8 +345,6 @@ class YamlGen {
     res.dwEndloop -= s.dwStart;
     if (this.sf2.shdr[s.wSampleLink].wSampleLink === s.id) // paired
       res.wSampleLink = this.samples[res.wSampleLink];
-    // res.lengthToNext =
-    // res.smpl =
     return res;
   }
 

@@ -381,8 +381,9 @@ class SF2 extends RIFF {
     if (this[_name]) return this[_name];
     let res = RecordLayout[name].parse(this.pdta.firstForName(name));
     if (pairwise) {
-      for (let i = 1; i < res.length; ++i)
-        pairwise(res[i - 1], res[i]);
+      if (typeof pairwise === "function")
+        for (let i = 1; i < res.length; ++i)
+          pairwise(res[i - 1], res[i]);
       res.sf2Terminator = res.pop();
     }
     if (postproc) res = postproc(res);
@@ -390,7 +391,7 @@ class SF2 extends RIFF {
   }
 
   get shdr() {
-    return this._cachedRecord("shdr");
+    return this._cachedRecord("shdr", true);
   }
 
   get pmod() {
