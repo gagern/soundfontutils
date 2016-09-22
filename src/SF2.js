@@ -1,3 +1,5 @@
+"use strict";
+
 class Chunk {
 
   constructor(id, data) {
@@ -106,9 +108,15 @@ class RecordLayout {
       let [type, name] = part.split(" ");
       let len = +type.slice(1);
       this.len += len;
-      if (typeof this[type] !== "function")
+      if (typeof this["dec_" + type] !== "function" ||
+          typeof this["enc_" + type] !== "function")
         throw Error("Invalid type: " + type);
-      parts.push({name, len, dec: this[type]});
+      parts.push({
+        name,
+        len,
+        dec: this["dec_" + type],
+        enc: this["enc_" + type]
+      });
     }
     if (checkLength !== undefined && this.len !== checkLength)
       throw Error("RecordLayout length mismatch");
@@ -136,36 +144,102 @@ class RecordLayout {
     return res;
   }
 
-  u1(buf, pos) {
+  write(id, lst) {
+    let chunk = Buffer.alloc(8 + lst.length * this.len);
+    chunk.write(id, 0, "ascii");
+    chunk.writeUInt32LE(chunk.length - 8, 4);
+    let pos = 8;
+    for (let itm of lst) {
+      for (let part of this.parts) {
+        part.enc(chunk, pos, itm[part.name]);
+        pos += part.len;
+      }
+    }
+    return chunk;
+  }
+
+  dec_u1(buf, pos) {
     return buf.readUInt8(pos);
   }
 
-  i1(buf, pos) {
+  enc_u1(buf, pos, val) {
+    buf.writeUInt8(val, pos);
+  }
+
+  dec_i1(buf, pos) {
     return buf.readInt8(pos);
   }
 
-  z20(buf, pos) {
+  enc_i1(buf, pos, val) {
+    buf.writeInt8(val, pos);
+  }
+
+  dec_z20(buf, pos) {
     return buf.toString("binary", pos, pos + 20).replace(/\0+$/, "");
   }
 
-  u2(buf, pos) {
+  enc_z20(buf, pos, val) {
+    buf.fill(0, pos, pos + 20);
+    buf.write(val, pos, "binary");
+  }
+
+  dec_u2(buf, pos) {
     return buf.readUInt16LE(pos);
   }
 
-  i2(buf, pos) {
+  enc_u2(buf, pos, val) {
+    buf.writeUInt16LE(val, pos);
+  }
+
+  dec_i2(buf, pos) {
     return buf.readInt16LE(pos);
   }
 
-  u4(buf, pos) {
+  enc_i2(buf, pos, val) {
+    buf.writeInt16LE(val, pos);
+  }
+
+  dec_u4(buf, pos) {
     return buf.readUInt32LE(pos);
   }
 
-  a2(buf, pos) {
+  enc_u4(buf, pos, val) {
+    buf.writeUInt32LE(val, pos);
+  }
+
+  dec_a2(buf, pos) {
     return {
       ranges: new Range(buf.readInt8(pos), buf.readInt8(pos + 1)),
       shAmount: buf.readInt16LE(pos),
       wAmount: buf.readUInt16LE(pos),
     };
+  }
+
+  enc_a2(buf, pos, val) {
+    let match;
+    if (val.hasOwnProperty("shAmount")) {
+      buf.writeInt16LE(val.shAmount, pos)
+    } else if (val.hasOwnProperty("wAmount")) {
+      buf.writeUInt16LE(val.wAmount, pos)
+    } else if (val.hasOwnProperty("ranges")) {
+      buf.writeInt8(ranges.byLo, pos);
+      buf.writeInt8(ranges.byHi, pos + 1);
+    } else if (typeof val === "string") {
+      let match;
+      if ((match = /^(-?\d+)-(-?\d+)$/.exec(val))) {
+        buf.writeInt8(+match[1], pos);
+        buf.writeInt8(+match[2], pos + 1);
+      } else {
+        throw Error("Unknown amount string representation: " + val);
+      }
+    } else if (typeof val === "number") {
+      if (val < 0)
+        buf.writeInt16LE(val, pos)
+      else
+        buf.writeUInt16LE(val, pos)
+    } else {
+      throw Error("Unknown amount representation: " + val);
+    }
   }
 
 }
@@ -484,6 +558,7 @@ class SF2 extends RIFF {
 
 
 module.exports.Chunk = Chunk;
+module.exports.Generator = Generator;
 module.exports.RIFF = RIFF;
 module.exports.Range = Range;
 module.exports.RecordLayout = RecordLayout;

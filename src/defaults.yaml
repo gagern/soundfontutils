@@ -1,0 +1,65 @@
+RIFF:
+  sfbk:
+    - INFO:
+      - ifil
+      - isng
+      - INAM
+      - irom
+      - iver
+      - ICRD
+      - IENG
+      - IPRD
+      - ICOP
+      - ICMT
+      - ISFT
+    - sdta:
+      - smpl
+    - pdta:
+      - phdr
+      - pbag
+      - pmod
+      - pgen
+      - inst
+      - ibag
+      - imod
+      - igen
+      - shdr
+term:
+  phdr:
+    achPresetName: EOP
+    wPreset: 0
+    wBank: 0
+    dwLibrary: 0
+    dwGenre: 0
+    dwMorphology: 0
+  pmod:
+    sfModSrcOper: 0
+    sfModDestOper: 0
+    modAmount: 0
+    sfModAmtSrcOper: 0
+    sfModTransOper: 0
+  pgen:
+    sfGenOper: 0
+    genAmount: 0
+  inst:
+    achInstName: EOI
+  imod:
+    sfModSrcOper: 0
+    sfModDestOper: 0
+    modAmount: 0
+    sfModAmtSrcOper: 0
+    sfModTransOper: 0
+  igen:
+    sfGenOper: 0
+    genAmount: 0
+  shdr:
+    achSampleName: EOS
+    dwStart: 0
+    dwEnd: 0
+    dwStartloop: 0
+    dwEndloop: 0
+    dwSamplerRate: 0
+    byOriginalPitch: 0
+    chPitchCorrection: 0
+    wSampleLink: 0
+    sfSampleType: 0

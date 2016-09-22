@@ -1,3 +1,5 @@
+"use strict";
+
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
@@ -17,9 +19,15 @@ const sampleKeys = SF2.RecordLayout.shdr.names.concat(
   "sdta", "length", "smpl", "sm24"
 );
 
-const termKeys = ["phdr", "inst", "shdr"].concat(
+const termKeys = [
+  "phdr", "pmod", "pgen", "inst", "imod", "igen", "shdr"
+].concat(
   SF2.RecordLayout.phdr.names,
+  SF2.RecordLayout.pmod.names,
+  SF2.RecordLayout.pgen.names,
   SF2.RecordLayout.inst.names,
+  SF2.RecordLayout.imod.names,
+  SF2.RecordLayout.igen.names,
   SF2.RecordLayout.shdr.names
 );
 
@@ -51,7 +59,7 @@ class YamlGen {
     this.presets = this.safeNames(this.sf2.phdr.map(i => i.achPresetName));
     this.instruments = this.safeNames(this.sf2.inst.map(i => i.achInstName));
     this.samples = this.safeNames(this.sf2.shdr.map(i => i.achSampleName));
-    this.writeYaml("RIFF", this.riff(this.sf2)[""]);
+    this.writeYaml("RIFF", this.riff(this.sf2)[""][0]);
     this.writeYaml("INFO", this.info());
     this.writeYaml("sdta", this.sdta());
     this.writeYaml("phdr", this.presets);
@@ -79,7 +87,24 @@ class YamlGen {
 
   safeNames(names) {
     const res = names.map(this.safeName, this);
-    // TODO: detect and handle case-insensitive duplicates
+    const lc = res.map(s => s.toLowerCase());
+    const once = new Set();
+    const twice = new Set();
+    for (let n of lc) {
+      if (once.has(n))
+        twice.add(n);
+      else
+        once.add(n);
+    }
+    for (let i = 0; i < res.length; ++i) {
+      if (twice.has(lc[i])) {
+        let j = 1;
+        while (once.has(lc[i] + "_" + j))
+          ++j;
+        once.add(lc[i] + "_" + j);
+        res[i] += "_" + j;
+      }
+    }
     return res;
   }
 
@@ -157,6 +182,20 @@ class YamlGen {
     delete term.id;
     res.shdr = term;
 
+    term = Object.assign({}, this.sf2.pmod[this.sf2.pmod.length - 1]);
+    delete term.id;
+    res.pmod = term;
+
+    term = this.sf2.pgen[this.sf2.pgen.length - 1];
+    res.pgen = Object.assign({}, term, {genAmount: term.genAmount.shAmount});
+
+    term = Object.assign({}, this.sf2.imod[this.sf2.imod.length - 1]);
+    delete term.id;
+    res.imod = term;
+
+    term = this.sf2.igen[this.sf2.igen.length - 1];
+    res.igen = Object.assign({}, term, {genAmount: term.genAmount.shAmount});
+
     return res;
   }
 
@@ -173,6 +212,7 @@ class YamlGen {
         start: s.dwStart,
         end: s.dwEnd,
         rate: s.dwSamplerRate,
+        type: s.sfSampleType,
         shdr: s,
       };
       this.sdtaMap.set(link.start, link);
@@ -185,6 +225,7 @@ class YamlGen {
         start: 0,
         end: seq[0].start,
         rate: 44100,
+        type: 1,
       });
     }
     seq.push({
@@ -192,6 +233,7 @@ class YamlGen {
       start: smpl.data.length / 2,
       end: smpl.data.length / 2,
       rate: 44100,
+      type: 1,
     });
     for (let i = 1; i < seq.length; ++i) {
       const a = seq[i - 1], b = seq[i];
@@ -216,6 +258,7 @@ class YamlGen {
     }
     seq.pop();
     const res = [];
+    let gaplen = 32;
     for (let s of seq) {
       let hi = smpl.data.slice(s.start << 1, s.end << 1), lo = null;
       let h = crypto.createHash("sha1");
@@ -230,18 +273,18 @@ class YamlGen {
         h.update(lo);
         d.sm24 = h.digest("hex");
       }
-      this.writeWav(s.name, s.rate, hi, lo);
+      this.writeWav(s.name, s.rate, s.type, hi, lo);
       var shdr = s.shdr ? this.sample(s.shdr) : {};
       shdr.sdta = d;
       this.writeYaml("samples/" + s.name, shdr, sampleKeys);
       res.push(s.name);
-      if (s.next.start - s.end !== 32)
-        res.push({gap: s.next.start - s.end});
+      if (s.next.start - s.end !== gaplen)
+        res.push({gap: (gaplen = s.next.start - s.end)});
     }
     return res;
   }
 
-  writeWav(name, rate, hi, lo) {
+  writeWav(name, rate, type, hi, lo) {
     const channels = 1;
     const bytesPerSample = lo === null ? 2 : 3;
     const headlen = 16;
@@ -260,7 +303,7 @@ class YamlGen {
     buf.writeUInt32LE(rate * blockAlign, pos + 8);
     buf.writeUInt16LE(blockAlign, pos + 12);
     buf.writeUInt16LE(bytesPerSample * 8, pos + 14);
-    pos += 16;
+    pos += headlen;
     buf.write("data", pos);
     buf.writeUInt32LE(datalen, pos + 4);
     pos += 8;
@@ -343,7 +386,8 @@ class YamlGen {
     res.dwEnd -= s.dwStart;
     res.dwStartloop -= s.dwStart;
     res.dwEndloop -= s.dwStart;
-    if (this.sf2.shdr[s.wSampleLink].wSampleLink === s.id) // paired
+    if (s.wSampleLink !== s.id &&
+        this.sf2.shdr[s.wSampleLink].wSampleLink === s.id) // paired
       res.wSampleLink = this.samples[res.wSampleLink];
     return res;
   }
