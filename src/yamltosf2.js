@@ -310,15 +310,24 @@ class YamlParse {
           if (op < 0)
             throw Error("Invalid generator: " + k);
           if (k === "instrument") {
-            return this.instruments().then(inst => ({
-              sfGenOper: op,
-              genAmount: inst.dict.get(v),
-            }));
+            return this.instruments().then(inst => {
+              if (!inst.dict.has(v))
+                throw Error("No such instrument: " + v);
+              return {
+                sfGenOper: op,
+                genAmount: inst.dict.get(v),
+              };
+            });
           } else if (k === "sampleID") {
-            return this.samples1().then(smpl => ({
-              sfGenOper: op,
-              genAmount: smpl.dict.get(v),
-            }));
+            return this.samples1().then(smpl => {
+              if (!smpl.dict.has(v)) {
+                throw Error("No such sample: " + v);
+              }
+              return {
+                sfGenOper: op,
+                genAmount: smpl.dict.get(v),
+              }
+            });
           } else {
             return Promise.resolve({
               sfGenOper: op,
