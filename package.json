@@ -1,0 +1,30 @@
+{
+  "name": "soundfontutils",
+  "version": "0.1.0",
+  "description": "Tools designed to work with soundfonts",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gagern/soundfontutils.git"
+  },
+  "keywords": [
+    "soundfont",
+    "sound font",
+    "midi",
+    "audio",
+    "converter",
+    "compiler"
+  ],
+  "author": "Martin von Gagern",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/gagern/soundfontutils/issues"
+  },
+  "homepage": "https://github.com/gagern/soundfontutils#readme",
+  "dependencies": {
+    "js-yaml": "^3.6.1"
+  }
+}
