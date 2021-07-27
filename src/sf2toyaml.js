@@ -345,6 +345,7 @@ class YamlGen {
       return r;
     });
     if (res.zones.length &&
+        res.zones[0].gens &&
         res.zones[0].gens.length &&
         !res.zones[0].gens[res.zones[0].gens.length - 1].instrument)
       res.global = res.zones.shift();
